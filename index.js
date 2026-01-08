@@ -19,7 +19,8 @@ app.use(express.json()); // 讓後端讀懂前端傳來的 JSON 資料
 app.get('/api/messages', async (req, res) => {
     try {
         const { data, error } = await supabase
-            .from('messages') // 你的資料表名稱
+            .from
+            ('messages') // 你的資料表名稱
             .select('*')
             .order('created_at', { ascending: false }); // 最新的留言排在最前面
 
@@ -51,39 +52,40 @@ app.post('/api/messages', async (req, res) => {
 
 // 【點讚功能：增加讚數】
 //  PATCH 或 POST 都可以，這裡用 POST 並帶入留言 ID
+// 【點讚功能：增加或減少讚數】
 app.post('/api/messages/:id/like', async (req, res) => {
     try {
         const { id } = req.params;
+        const { action } = req.body; // 前端傳送 'add' 或 'remove'
 
-        // 這裡我們需要執行「原子增加」，避免兩個人同時按讚時發生錯誤
-        // Supabase 的 rpc 功能最準，但簡單做法是先拿再存
-        // 專業做法：使用 SQL Function，但我們先用簡單邏輯：
-        
-        // 1. 先抓取該則留言目前有幾讚
-        const { data: msg } = await supabase
+        // 1. 先從 Supabase 抓出目前的讚數
+        const { data: msg, error: fetchError } = await supabase
             .from('messages')
             .select('likes')
             .eq('id', id)
             .single();
 
-        // 2. 把數字 +1 並更新回去，並返回更新後的完整留言
-        const newLikes = (msg.likes || 0) + 1;
-        const { data: updatedMsg, error } = await supabase
+        if (fetchError) throw fetchError;
+
+        // 2. 計算新的讚數
+        let currentLikes = msg.likes || 0;
+        let newLikes = (action === 'add') ? currentLikes + 1 : currentLikes - 1;
+        
+        // 安全檢查：讚數最低為 0
+        newLikes = Math.max(0, newLikes);
+
+        // 3. 更新回 Supabase
+        const { error: updateError } = await supabase
             .from('messages')
             .update({ likes: newLikes })
-            .eq('id', id)
-            .select()
-            .single();
+            .eq('id', id);
 
-        if (error) throw error;
-        
-        // 返回更新後的完整留言物件
-        res.json({ 
-            success: true, 
-            data: updatedMsg 
-        });
+        if (updateError) throw updateError;
+
+        res.json({ success: true, newLikes });
     } catch (error) {
-        res.status(500).json({ error: '點讚失敗' });
+        console.error('點讚失敗:', error);
+        res.status(500).json({ error: '無法處理讚數更新' });
     }
 });
 
